@@ -1311,7 +1311,7 @@ class NodePool(threading.Thread):
             c.job = None
             c.timespec = config.get('cron', {}).get(name, default)
 
-        for addr in config['zmq-publishers']:
+        for addr in config.get('zmq-publishers', []):
             z = ZMQPublisher()
             z.name = addr
             z.listener = None
@@ -1416,6 +1416,7 @@ class NodePool(threading.Thread):
             l.min_ready = label.get('min-ready', 2)
             l.subnodes = label.get('subnodes', 0)
             l.ready_script = label.get('ready-script')
+            l.ghost_name = label.get('ghost-name')
             l.providers = {}
             for provider in label['providers']:
                 p = LabelProvider()
@@ -1427,6 +1428,7 @@ class NodePool(threading.Thread):
             t.name = target['name']
             newconfig.targets[t.name] = t
             jenkins = target.get('jenkins')
+            t.ghost_target = target.get('ghost-target')
             t.online = True
             if jenkins:
                 t.jenkins_url = jenkins['url']
@@ -1523,6 +1525,8 @@ class NodePool(threading.Thread):
         # only do it if we need to check for targets
         if check_targets:
             for t in config.targets.values():
+                if t.ghost_target:
+                    continue
                 oldmanager = None
                 if self.config:
                     oldmanager = self.config.jenkins_managers.get(t.name)
@@ -1544,6 +1548,8 @@ class NodePool(threading.Thread):
                 oldmanager.stop()
 
             for t in config.targets.values():
+                if t.ghost_target:
+                    continue
                 if t.jenkins_url:
                     try:
                         info = config.jenkins_managers[t.name].getInfo()
@@ -1769,7 +1775,17 @@ class NodePool(threading.Thread):
                 nodes = session.getNodes(label_name=label.name,
                                          target_name=target.name)
                 allocation_requests[label.name] = ar
-                ar.addTarget(at, len(nodes))
+                # If this label doesn't have a real target, it will mention
+                # the name of the ghost_target to use, as to not mess with
+                # the algotithm.
+                if label.ghost_name:
+                    if label.ghost_name == target.name:
+                        ar.addTarget(at, len(nodes))
+                elif not target.ghost_target:
+                    # If the target is a ghost target, then we don't want to
+                    # add it to the AR, as this will lead to jenkins bound
+                    # nodes being send to it.
+                    ar.addTarget(at, len(nodes))
                 for provider in label.providers.values():
                     image = session.getCurrentSnapshotImage(
                         provider.name, label.image)
